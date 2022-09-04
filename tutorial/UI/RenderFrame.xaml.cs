@@ -21,7 +21,7 @@ namespace tutorial.UI
     /// </summary>
     public partial class RenderFrame : UserControl
     {
-        public double scale = -5;
+        public double scale = 5;
 
         public int width;
         public int height;

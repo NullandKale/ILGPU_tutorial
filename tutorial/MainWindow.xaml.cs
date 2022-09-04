@@ -32,6 +32,8 @@ namespace tutorial
 
         public Action<Index1D, dPixelBuffer2D<byte>> generateFrameKernel;
 
+        public VoxelBuffer<(short x, short y)> voxelBuffer;
+        public PixelBuffer2D<byte> inputFrameBuffer;
         public PixelBuffer2D<byte> frameBuffer;
 
         public volatile bool run = true;
@@ -174,7 +176,7 @@ namespace tutorial
 
                 Timer.Reset();
 
-                Thread.Sleep(250);
+                Thread.Sleep(250); 
 
             }
         }
