@@ -33,7 +33,7 @@ namespace tutorial
         public Action<Index1D, dPixelBuffer2D<byte>> generateFrameKernel;
 
         public VoxelBuffer<(short x, short y)> voxelBuffer;
-        public PixelBuffer2D<byte> inputFrameBuffer;
+        public GPUImageRGBD inputImage;
         public PixelBuffer2D<byte> frameBuffer;
 
         public volatile bool run = true;
@@ -44,39 +44,29 @@ namespace tutorial
             InitializeComponent();
 
             InitGPU(false);
-            frame.onResolutionChanged = (int width, int height) =>
-            {
-                if (renderThread != null)
-                {
-                    run = false;
-                    renderThread.Join(100);
-                }
 
-                if (frameBuffer != null)
-                {
-                    frameBuffer.Dispose();
-                }
-
-                frameBuffer = new PixelBuffer2D<byte>(device!, height, width);
-
-                FillRandom();
-                Application.Current?.Dispatcher.Invoke(() =>
-                {
-                    frame.update(ref frameBuffer.GetRawFrameData());
-                });
-            };
+            inputImage = new GPUImageRGBD(device!, "");
+            frame.onResolutionChanged = onResolutionChanged;
         }
 
-        private void FillRandom()
+        public void onResolutionChanged(int width, int height)
         {
-            Random random = new Random();
-
-            Parallel.For(0, frameBuffer.width * frameBuffer.height, (int i) =>
+            if (renderThread != null)
             {
-                byte isAlive = (byte)((random.Next() % 9 == 0) ? 255 : 0);
-                frameBuffer[i * 3] = isAlive;
-                frameBuffer[i * 3 + 1] = isAlive;
-                frameBuffer[i * 3 + 2] = isAlive;
+                run = false;
+                renderThread.Join(100);
+            }
+
+            if (frameBuffer != null)
+            {
+                frameBuffer.Dispose();
+            }
+
+            frameBuffer = new PixelBuffer2D<byte>(device!, height, width);
+
+            Application.Current?.Dispatcher.Invoke(() =>
+            {
+                frame.update(ref frameBuffer.GetRawFrameData());
             });
         }
 

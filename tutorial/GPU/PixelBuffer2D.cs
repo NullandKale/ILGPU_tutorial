@@ -2,6 +2,8 @@
 using ILGPU.Runtime;
 using System;
 using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -30,6 +32,23 @@ namespace tutorial.GPU
             data = new T[width * height * 3];
             memoryBuffer = device.Allocate1D<T>(width * height * 3);
             frameBuffer = new dPixelBuffer2D<T>(width, height, memoryBuffer);
+        }
+
+        public static unsafe void Save(PixelBuffer2D<byte> pixelBuffer, string path)
+        {
+            try
+            {
+                fixed (byte* bytes = pixelBuffer.GetRawFrameData())
+                {
+                    using Bitmap b = new Bitmap(pixelBuffer.width, pixelBuffer.height, pixelBuffer.width * 3, PixelFormat.Format24bppRgb, new IntPtr(bytes));
+                    b.Save(path, ImageFormat.Png);  
+                }
+            }
+            catch(Exception e) 
+            {
+                Console.WriteLine(e);
+            }
+            
         }
 
         public ref T[] GetRawFrameData()

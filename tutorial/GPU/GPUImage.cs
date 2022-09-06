@@ -30,9 +30,9 @@ namespace tutorial.GPU
                 int y = i / bitmap.Width;
                 Color color = bitmap.GetPixel(x, y);
                 int subPixel = i * 3;
-                data[i] = color.R;
-                data[i + 1] = color.G;
-                data[i + 2] = color.B;
+                data[subPixel] = color.R;
+                data[subPixel + 1] = color.G;
+                data[subPixel + 2] = color.B;
             });
         }
     }
