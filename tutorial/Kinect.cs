@@ -26,7 +26,7 @@ namespace tutorial
         const int bufferCount = 2;
         int currentBuffer = 0;
         MemoryBuffer1D<byte, Stride1D.Dense>[] colorBuffers;
-        MemoryBuffer1D<short, Stride1D.Dense>[] depthBuffers;
+        MemoryBuffer1D<ushort, Stride1D.Dense>[] depthBuffers;
 
         public Kinect(Accelerator gpu)
         {
@@ -49,14 +49,29 @@ namespace tutorial
             depth = calibration.DepthCameraCalibration;
 
             colorBuffers = new MemoryBuffer1D<byte, Stride1D.Dense>[bufferCount];
-            depthBuffers = new MemoryBuffer1D<short, Stride1D.Dense>[bufferCount];
+            depthBuffers = new MemoryBuffer1D<ushort, Stride1D.Dense>[bufferCount];
 
             for(int i = 0; i < bufferCount; i++)
             {
                 colorBuffers[i] = gpu.Allocate1D<byte>(color.ResolutionWidth * color.ResolutionHeight * 4);
-                depthBuffers[i] = gpu.Allocate1D<short>(depth.ResolutionHeight * depth.ResolutionWidth);
+                depthBuffers[i] = gpu.Allocate1D<ushort>(depth.ResolutionHeight * depth.ResolutionWidth);
             }
 
+        }
+
+        public int ColorWidth => color.ResolutionWidth;
+        public int ColorHeight => color.ResolutionHeight;
+
+        public int DepthWidth => depth.ResolutionWidth;
+        public int DepthHeight => depth.ResolutionHeight;
+
+        public void TryCaptureFromCamera()
+        {
+            try
+            {
+                CaptureFromCamera();
+            }
+            catch { }
         }
 
         public void CaptureFromCamera()
@@ -71,9 +86,11 @@ namespace tutorial
                 unsafe
                 {
                     Span<byte> colorData = colorImage.Memory.Span;
-                    Span<short> depthData = MemoryMarshal.Cast<byte, short>(depthImage.Memory.Span);
+                    Span<ushort> depthData = MemoryMarshal.Cast<byte, ushort>(depthImage.Memory.Span);
 
-                    colorBuffers[nextBuffer].CopyFromCPU(colorData.ToArray()); // this is slow and bad
+                    //colorBuffers[nextBuffer].CopyFromCPU(in colorData);
+                    //colorBuffers[nextBuffer].CopyFromCPU(in colorData, colorData.Length);
+                    colorBuffers[nextBuffer].CopyFromCPU(colorData.ToArray());
                     depthBuffers[nextBuffer].CopyFromCPU(depthData.ToArray()); // this is slow and bad
                 }
             }
@@ -96,7 +113,7 @@ namespace tutorial
                 depthBuffers[i].Dispose();
             }
 
-
+            device.StopCameras();
         }
     }
 
@@ -108,11 +125,11 @@ namespace tutorial
         public int depthHeight;
 
         public ArrayView1D<byte, Stride1D.Dense> color;
-        public ArrayView1D<short, Stride1D.Dense> depth;
+        public ArrayView1D<ushort, Stride1D.Dense> depth;
 
         public FrameBuffer(int colorWidth, int colorHeight,
                            int depthWidth, int depthHeight,
-                           ArrayView1D<byte, Stride1D.Dense> color, ArrayView1D<short, Stride1D.Dense> depth)
+                           ArrayView1D<byte, Stride1D.Dense> color, ArrayView1D<ushort, Stride1D.Dense> depth)
         {
             this.colorWidth = colorWidth;
             this.colorHeight = colorHeight;
@@ -120,6 +137,11 @@ namespace tutorial
             this.depthHeight = depthHeight;
             this.color = color;
             this.depth = depth;
+        }
+
+        public (byte r, byte g, byte b, byte a) GetColorPixel(float x, float y)
+        {
+            return GetColorPixel((int)((y * colorHeight) * colorWidth + (x * colorWidth)));
         }
 
         public (byte r, byte g, byte b, byte a) GetColorPixel(int x, int y)
@@ -137,12 +159,17 @@ namespace tutorial
                 color[index + 3]);
         }
 
-        public short GetDepthPixel(int x, int y)
+        public float GetDepthPixel(float x, float y)
+        {
+            return GetDepthPixel((int)((y * depthHeight) * depthWidth + (x * depthWidth))) / ushort.MaxValue;
+        }
+
+        public ushort GetDepthPixel(int x, int y)
         {
             return GetDepthPixel(y * depthWidth + x);
         }
 
-        public short GetDepthPixel(int index)
+        public ushort GetDepthPixel(int index)
         {
             return depth[index];
         }

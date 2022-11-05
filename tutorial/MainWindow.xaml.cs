@@ -33,12 +33,12 @@ namespace tutorial
         public Accelerator device;
 
         public Action<Index2D, Camera, dPixelBuffer2D<byte>, dVoxelShortBuffer> generateFrameKernel;
-        public Action<Index1D, dPixelBuffer2D<byte>, dPixelBuffer2D<byte>, dVoxelShortBuffer> fillVoxelsKernel;
+        public Action<Index1D, FrameBuffer, dVoxelShortBuffer> fillVoxelsKernel;
 
         public Camera camera;
         public VoxelShortBuffer voxelBuffer;
-        public GPUImageRGBD inputImage;
         public PixelBuffer2D<byte> frameBuffer;
+        public Kinect kinect;
 
         public volatile bool run = true;
         public volatile bool pause = false;
@@ -82,32 +82,34 @@ namespace tutorial
         {
             context = Context.Create(builder => builder.Cuda().CPU().EnableAlgorithms().Optimize(OptimizationLevel.O2));
             device = context.GetPreferredDevice(forceCPU).CreateAccelerator(context);
+            kinect = new Kinect(device);
 
-            //inputImage = new GPUImageRGBD(device, "C:\\Repos\\tmp\\spiderman pointing.png");
-            //inputImage = new GPUImageRGBD(device, "C:\\Users\\zinsl\\Downloads\\birthday-rgbd.jpg");
-            inputImage = new GPUImageRGBD(device, "C:\\Users\\zinsl\\Desktop\\Voxel_Depth_Test\\Nikki_RGBD.jpg");
+            voxelBuffer = new VoxelShortBuffer(device, kinect.ColorWidth, kinect.ColorHeight, 256, new Vec3(1, 1, 0.85f));
 
-            voxelBuffer = new VoxelShortBuffer(device, inputImage.image.width, inputImage.image.height, 256, new Vec3(1, 1, 0.85f));
-
-            fillVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index1D, dPixelBuffer2D<byte>, dPixelBuffer2D<byte>, dVoxelShortBuffer>(FillVoxelBuffer);
+            fillVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index1D, FrameBuffer, dVoxelShortBuffer>(FillVoxelBuffer);
             generateFrameKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, dPixelBuffer2D<byte>, dVoxelShortBuffer> (GenerateFrame);
 
         }
 
-        private static void FillVoxelBuffer(Index1D pixel, dPixelBuffer2D<byte> depth, dPixelBuffer2D<byte> image, dVoxelShortBuffer voxels)
+        private static void FillVoxelBuffer(Index1D pixel, FrameBuffer frameBuffer, dVoxelShortBuffer voxels)
         {
-            (byte x, byte y, byte z) depthData = depth.readFrameBuffer(pixel);
-            (byte x, byte y, byte z) colorData = image.readFrameBuffer(pixel);
+            float x = ((float)(pixel.X % frameBuffer.colorWidth) / frameBuffer.depthWidth);
+            float y = ((float)(pixel.X / frameBuffer.colorWidth) / frameBuffer.depthHeight);
 
-            (int x, int y) pos = depth.GetPosFromIndex(pixel);
+            float depthData = frameBuffer.GetDepthPixel(x,y);
+            (byte r, byte g, byte b, byte a) colorData = frameBuffer.GetColorPixel(x,y);
 
-            int extraThickness = 1;
-            int z = (depthData.x + depthData.y + depthData.z) / 3;
+            colorData.r = (byte)(depthData * 255);
+            colorData.g = (byte)(depthData * 255);
+            colorData.b = (byte)(depthData * 255);
+
+            int extraThickness = 10;
+            int z = (int)(depthData * voxels.length);
             int endX = XMath.Max(z - extraThickness, 0);
 
             for (; z >= endX; z--)
             {
-                voxels.writeFrameBuffer(pos.x, pos.y, z, colorData);
+                voxels.writeFrameBuffer(x, y, 0, colorData);
             }
         }
 
@@ -116,7 +118,6 @@ namespace tutorial
         {
             Ray ray = camera.GetRay(pixel.X, pixel.Y);
             ray = new Ray(ray.a, new Vec3(ray.b.x, ray.b.y, ray.b.z));
-            (byte x, byte y, byte z) color;
             (byte x, byte y, byte z) hit = voxels.hit(ray, 0.001f, float.MaxValue);
 
             if (hit.x != 0 && hit.y != 0 && hit.z != 0)
@@ -226,9 +227,7 @@ namespace tutorial
         private void updateRenderThread()
         {
             Stopwatch Timer = new Stopwatch();
-
-            fillVoxelsKernel(inputImage.image.width * inputImage.image.height, inputImage.depth.GetDPixelBuffer(), inputImage.image.GetDPixelBuffer(), voxelBuffer.GetDVoxelBuffer());
-
+            
             while(run)
             {
                 if (pause)
@@ -239,6 +238,8 @@ namespace tutorial
                 {
                     Timer.Start();
 
+                    kinect.TryCaptureFromCamera();
+                    fillVoxelsKernel(kinect.ColorWidth * kinect.ColorHeight, kinect.GetCurrentFrame(), voxelBuffer.GetDVoxelBuffer());
                     generateFrameKernel(new Index2D(frameBuffer.width - 1, frame.height - 1), camera, frameBuffer.GetDPixelBuffer(), voxelBuffer.GetDVoxelBuffer());
                     device.Synchronize();
 

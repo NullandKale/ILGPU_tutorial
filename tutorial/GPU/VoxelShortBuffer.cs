@@ -81,6 +81,11 @@ namespace tutorial.GPU
                 this.data = _data.View;
             }
 
+            public int GetIndexFromPos(float x, float y, float z)
+            {
+                return (int)(((z * length) * width * height) + ((y * height) * width) + (x * width));
+            }
+
             public int GetIndexFromPos(int x, int y, int z)
             {
                 return (z * width * height) + (y * width) + x;
@@ -99,6 +104,12 @@ namespace tutorial.GPU
             {
                 int idx = GetIndexFromPos(x, y, z);
                 return data[idx];
+            }
+
+            public void writeFrameBuffer(float x, float y, float z, (byte r, byte g, byte b, byte a) value)
+            {
+                int idx = GetIndexFromPos(x, y, z);
+                data[idx] = (value.r, value.g, value.b);
             }
 
             public void writeFrameBuffer(int x, int y, int z, (byte r, byte g, byte b) value)
