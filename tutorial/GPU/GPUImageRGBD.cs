@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -24,30 +25,40 @@ namespace tutorial.GPU
             CopyImageSlow();
         }
 
-        private void CopyImageSlow()
+        private unsafe void CopyImageSlow()
         {
-            Parallel.For(0, bitmap.Width * bitmap.Height, i =>
+            BitmapData data = bitmap.LockBits(new Rectangle(0, 0, bitmap.Width, bitmap.Height), ImageLockMode.ReadOnly, PixelFormat.Format24bppRgb);
+
+            Parallel.For(0, data.Height, y =>
             {
-                int x = i % bitmap.Width;
-                int y = i / bitmap.Width;
+                ReadOnlySpan<byte> bytes = new ReadOnlySpan<byte>(data.Scan0.ToPointer(), data.Stride * data.Height);
 
-                Color color = bitmap.GetPixel(x, y);
-                int subPixel = (i * 3) / 2;
+                for (int x = 0; x < data.Width; x++)
+                {
+                    int inSubPixel = (y * data.Stride + (x * 3));
 
-                //Depth
-                if (x < bitmap.Width / 2)
-                {
-                    image[subPixel] = color.R;
-                    image[subPixel + 1] = color.G;
-                    image[subPixel + 2] = color.B;
-                }
-                else
-                {
-                    depth[subPixel] = color.R;
-                    depth[subPixel + 1] = color.G;
-                    depth[subPixel + 2] = color.B;
+                    Color color = Color.FromArgb(bytes[inSubPixel], bytes[inSubPixel + 1], bytes[inSubPixel + 2]);
+
+                    if (x < data.Width / 2)
+                    {
+                        int outSubPixel = (((y * image.width) + (x)) * 3);
+
+                        image[outSubPixel] = color.R;
+                        image[outSubPixel + 1] = color.G;
+                        image[outSubPixel + 2] = color.B;
+                    }
+                    else
+                    {
+                        int outSubPixel = (((y * depth.width) + (x - image.width)) * 3);
+
+                        depth[outSubPixel] = color.R;
+                        depth[outSubPixel + 1] = color.G;
+                        depth[outSubPixel + 2] = color.B;
+                    }
                 }
             });
+
+            bitmap.UnlockBits(data);
         }
     }
 }

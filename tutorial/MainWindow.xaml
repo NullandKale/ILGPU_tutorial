@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:tutorial" xmlns:ui="clr-namespace:tutorial.UI"
         mc:Ignorable="d"
-        Title="MainWindow" Height="450" Width="800" KeyUp="Window_KeyUp">
+        Title="MainWindow" Height="450" Width="800" KeyDown="Window_KeyUp" WindowState="Maximized">
     <Grid>
         <ui:RenderFrame x:Name="frame"/>
     </Grid>

@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -16,6 +17,8 @@ namespace tutorial.GPU
     {
         public int width;
         public int height;
+
+        public long byteLength;
 
         private bool needsUpdate = false;
         private bool needsTransfer = false;
@@ -38,10 +41,12 @@ namespace tutorial.GPU
         {
             try
             {
+                Directory.CreateDirectory(Directory.GetParent(path)!.FullName);
+
                 fixed (byte* bytes = pixelBuffer.GetRawFrameData())
                 {
                     using Bitmap b = new Bitmap(pixelBuffer.width, pixelBuffer.height, pixelBuffer.width * 3, PixelFormat.Format24bppRgb, new IntPtr(bytes));
-                    b.Save(path, ImageFormat.Png);  
+                    b.Save(path, ImageFormat.Jpeg);  
                 }
             }
             catch(Exception e) 
@@ -147,6 +152,14 @@ namespace tutorial.GPU
         public void writeFrameBuffer(int x, int y, T r, T g, T b)
         {
             int subPixel = GetIndexFromPos(x, y) * 3;
+            frame[subPixel] = r;
+            frame[subPixel + 1] = g;
+            frame[subPixel + 2] = b;
+        }
+
+        public void writeFrameBufferFlipped(int x, int y, T r, T g, T b)
+        {
+            int subPixel = ((y * width) + (width - x)) * 3;
             frame[subPixel] = r;
             frame[subPixel + 1] = g;
             frame[subPixel + 2] = b;
