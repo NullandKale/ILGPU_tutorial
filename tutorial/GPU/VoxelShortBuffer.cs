@@ -109,7 +109,10 @@ namespace tutorial.GPU
             public void writeFrameBuffer(float x, float y, float z, (byte r, byte g, byte b, byte a) value)
             {
                 int idx = GetIndexFromPos(x, y, z);
-                data[idx] = (value.r, value.g, value.b);
+                if(idx >= 0 && idx < data.Length)
+                {
+                    data[idx] = (value.r, value.g, value.b);
+                }
             }
 
             public void writeFrameBuffer(int x, int y, int z, (byte r, byte g, byte b) value)

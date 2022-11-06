@@ -2,6 +2,7 @@
 using ILGPU.Runtime;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
@@ -99,7 +100,17 @@ namespace tutorial.GPU
 
         public void Dispose()
         {
-            memoryBuffer.Dispose();
+            if(!memoryBuffer.IsDisposed)
+            {
+                try
+                {
+                    memoryBuffer.Dispose();
+                }
+                catch(Exception e)
+                {
+                    Trace.WriteLine(e.ToString());
+                }
+            }
         }
     }
 
@@ -152,9 +163,14 @@ namespace tutorial.GPU
         public void writeFrameBuffer(int x, int y, T r, T g, T b)
         {
             int subPixel = GetIndexFromPos(x, y) * 3;
-            frame[subPixel] = r;
-            frame[subPixel + 1] = g;
-            frame[subPixel + 2] = b;
+            int length = (int)(frame.Length - 3);
+
+            if(subPixel >= 0 && subPixel < length)
+            {
+                frame[subPixel] = r;
+                frame[subPixel + 1] = g;
+                frame[subPixel + 2] = b;
+            }
         }
 
         public void writeFrameBufferFlipped(int x, int y, T r, T g, T b)

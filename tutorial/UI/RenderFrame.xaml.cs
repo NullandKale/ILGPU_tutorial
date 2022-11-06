@@ -29,7 +29,6 @@ namespace tutorial.UI
         public WriteableBitmap? wBitmap;
         public Int32Rect rect;
 
-        public Action<int, int>? onResolutionChanged;
         public double frameTime;
 
         public RenderFrame()
@@ -41,45 +40,51 @@ namespace tutorial.UI
 
         private void RenderFrame_SizeChanged(object sender, SizeChangedEventArgs e)
         {
-            width = (int)e.NewSize.Width;
-            height = (int)e.NewSize.Height;
-            UpdateResolution();
+            //UpdateResolution((int)e.NewSize.Width, (int)e.NewSize.Height);
         }
 
-        private void UpdateResolution()
+        public void UpdateResolution(int width, int height)
         {
-            if (scale > 0)
+            lock(this)
             {
-                height = (int)(height * scale);
-                width = (int)(width * scale);
-            }
-            else
-            {
-                height = (int)(height / -scale);
-                width = (int)(width / -scale);
-            }
+                this.width = width;
+                this.height = height;
 
-            width += ((width * 3) % 4);
+                if (scale > 0)
+                {
+                    height = (int)(height * scale);
+                    width = (int)(width * scale);
+                }
+                else
+                {
+                    height = (int)(height / -scale);
+                    width = (int)(width / -scale);
+                }
 
-            wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Rgb24, null);
-            Frame.Source = wBitmap;
-            rect = new Int32Rect(0, 0, width, height);
-            onResolutionChanged?.Invoke(width, height);
+                width += ((width * 3) % 4);
+
+                wBitmap = new WriteableBitmap(width, height, 96, 96, PixelFormats.Rgb24, null);
+                Frame.Source = wBitmap;
+                rect = new Int32Rect(0, 0, width, height);
+            }
         }
 
         public void update(ref byte[] data)
         {
-            if (wBitmap != null)
+            lock(this)
             {
-                if (data.Length == wBitmap.PixelWidth * wBitmap.PixelHeight * 3)
+                if (wBitmap != null)
                 {
-                    wBitmap.Lock();
-                    IntPtr pBackBuffer = wBitmap.BackBuffer;
-                    Marshal.Copy(data, 0, pBackBuffer, data.Length);
-                    wBitmap.AddDirtyRect(rect);
-                    wBitmap.Unlock();
+                    if (data.Length == wBitmap.PixelWidth * wBitmap.PixelHeight * 3)
+                    {
+                        wBitmap.Lock();
+                        IntPtr pBackBuffer = wBitmap.BackBuffer;
+                        Marshal.Copy(data, 0, pBackBuffer, data.Length);
+                        wBitmap.AddDirtyRect(rect);
+                        wBitmap.Unlock();
 
-                    Info.Content = (int)frameTime + " MS";
+                        Info.Content = (int)frameTime + " MS";
+                    }
                 }
             }
         }
