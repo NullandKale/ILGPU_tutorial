@@ -83,7 +83,10 @@ namespace tutorial.GPU
 
             public int GetIndexFromPos(float x, float y, float z)
             {
-                return (int)(((z * length) * width * height) + ((y * height) * width) + (x * width));
+                x = x * width;
+                y = y * height;
+                z = z * length;
+                return GetIndexFromPos((int)x, (int)y, (int)z);
             }
 
             public int GetIndexFromPos(int x, int y, int z)

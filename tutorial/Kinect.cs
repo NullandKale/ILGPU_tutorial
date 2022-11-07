@@ -32,8 +32,16 @@ namespace tutorial
         CameraCalibration current;
         Transformation transform;
 
-        MemoryBuffer1D<byte, Stride1D.Dense> colorBuffer;
-        MemoryBuffer1D<UInt16, Stride1D.Dense> depthBuffer;
+        const int bufferCount = 3;
+        int currentBuffer = 0;
+
+        MemoryBuffer1D<byte, Stride1D.Dense>[] colorBuffers;
+        MemoryBuffer1D<UInt16, Stride1D.Dense>[] depthBuffers;
+
+        (ushort min, ushort max) minMax;
+
+        public volatile bool run = true;
+        public Thread thread;
 
         public Kinect(Accelerator gpu)
         {
@@ -58,8 +66,38 @@ namespace tutorial
             depth = calibration.DepthCameraCalibration;
             current = color;
 
-            colorBuffer = gpu.Allocate1D<byte>(current.ResolutionWidth * current.ResolutionHeight * 4);
-            depthBuffer = gpu.Allocate1D<UInt16>(current.ResolutionHeight * current.ResolutionWidth);
+            colorBuffers = new MemoryBuffer1D<byte, Stride1D.Dense>[bufferCount];
+            depthBuffers = new MemoryBuffer1D<ushort, Stride1D.Dense>[bufferCount];
+
+            for(int i = 0; i < bufferCount; i++)
+            {
+                colorBuffers[i] = gpu.Allocate1D<byte>(current.ResolutionWidth * current.ResolutionHeight * 4);
+                depthBuffers[i] = gpu.Allocate1D<UInt16>(current.ResolutionHeight * current.ResolutionWidth);
+            }
+
+            thread = new Thread(() => 
+            {
+                Stopwatch timer = new Stopwatch();
+
+                while(run)
+                {
+                    timer.Restart();
+
+                    TryCaptureFromCamera();
+
+                    timer.Stop();
+
+                    int timeToSleep = (int)(30.0 - timer.Elapsed.TotalMilliseconds);
+
+                    if (timeToSleep > 0)
+                    {
+                        Thread.Sleep(timeToSleep);
+                    }
+                }
+            });
+            thread.IsBackground = true;
+            thread.Start();
+
         }
 
         public int Width => current.ResolutionWidth;
@@ -79,6 +117,9 @@ namespace tutorial
 
         public void CaptureFromCamera()
         {
+            var colorBuffer = colorBuffers[(currentBuffer + 1) % bufferCount];
+            var depthBuffer = depthBuffers[(currentBuffer + 1) % bufferCount];
+
             using (Capture capture = device.GetCapture())
             {
                 unsafe 
@@ -122,6 +163,22 @@ namespace tutorial
                         {
                             Span<UInt16> depthData = new Span<UInt16>(d.Pointer, depthImage.Memory.Length / 2);
 
+                            minMax.min = ushort.MaxValue;
+                            minMax.max = ushort.MinValue;
+
+                            foreach (var depth in depthData)
+                            {
+                                if (minMax.min > depth)
+                                {
+                                    minMax.min = depth;
+                                }
+
+                                if (minMax.max < depth)
+                                {
+                                    minMax.max = depth;
+                                }
+                            }
+
                             if (depthData.Length == depthBuffer.Length)
                             {
                                 depthBuffer.View.CopyFromCPU(gpu.DefaultStream, depthData);
@@ -136,6 +193,11 @@ namespace tutorial
                     }
                 }
             }
+
+            colorBuffers[(currentBuffer + 1) % bufferCount] = colorBuffers[currentBuffer];
+            depthBuffers[(currentBuffer + 1) % bufferCount] = depthBuffers[currentBuffer];
+            colorBuffers[currentBuffer] = colorBuffer;
+            depthBuffers[currentBuffer] = depthBuffer;
         }
 
         public readonly struct MinUInt16T : IScanReduceOperation<ushort>
@@ -150,7 +212,7 @@ namespace tutorial
         public readonly struct MaxUInt16T : IScanReduceOperation<ushort>
         {
             public string CLCommand => "<#= op.Name.ToLower() #>";
-            public ushort Identity => 0;
+            public ushort Identity => ushort.MaxValue;
             public ushort Apply(ushort first, ushort second) => (XMath.Max(first, second));
             public void AtomicApply(ref ushort target, ushort value)
             {
@@ -161,21 +223,23 @@ namespace tutorial
 
         public (ushort min, ushort max) CalculateMinMaxDepth()
         {
-            //return (0, ushort.MaxValue);
+            return minMax;
+
+            return (0, ushort.MaxValue);
 
             using var minDepth = gpu.Allocate1D<ushort>(1);
             using var maxDepth = gpu.Allocate1D<ushort>(1);
 
-            gpu.Sequence(gpu.DefaultStream, depthBuffer.View, new UInt16Sequencer());
+            gpu.Sequence(gpu.DefaultStream, depthBuffers[currentBuffer].View, new UInt16Sequencer());
             gpu.Reduce<UInt16, MinUInt16T>(
                 gpu.DefaultStream,
-                depthBuffer.View,
+                depthBuffers[currentBuffer].View,
                 minDepth.View);
 
-            gpu.Sequence(gpu.DefaultStream, depthBuffer.View, new UInt16Sequencer());
+            gpu.Sequence(gpu.DefaultStream, depthBuffers[currentBuffer].View, new UInt16Sequencer());
             gpu.Reduce<UInt16, MaxUInt16T>(
                 gpu.DefaultStream,
-                depthBuffer.View,
+                depthBuffers[currentBuffer].View,
                 maxDepth.View);
 
             gpu.Synchronize();
@@ -196,13 +260,19 @@ namespace tutorial
             return new FrameBuffer(current.ResolutionWidth, current.ResolutionHeight,
                                    current.ResolutionWidth, current.ResolutionHeight,
                                    minMax.min, minMax.max,
-                                   colorBuffer, depthBuffer);
+                                   colorBuffers[currentBuffer], depthBuffers[currentBuffer]);
         }
 
         public void Dispose()
         {
-            colorBuffer.Dispose();
-            depthBuffer.Dispose();
+            run = false;
+            thread.Join(5000);
+
+            for (int i = 0; i < bufferCount; i++)
+            {
+                colorBuffers[i].Dispose();
+                depthBuffers[i].Dispose();
+            }
 
             device.StopCameras();
         }
@@ -272,16 +342,63 @@ namespace tutorial
             float xCord = x * depthWidth;
             float yCord = y * depthHeight;
 
-            ushort depth = GetDepthPixel((int) xCord, (int)yCord);
-            float toReturn = Remap(depth, minDepth, maxDepth, 0, 1);
-            //toReturn = 1.0f - toReturn;
+            ushort depth = GetDepthPixel((int)xCord, (int)yCord);
+
+            if(depth == 0)
+            {
+                return -1;
+            }
+
+            float toReturn = Remap((float)depth, (float)minDepth, (float)maxDepth, 0f, 1f);
 
             return toReturn;
         }
 
+        public (byte high, byte low) GetDepthBytes(float x, float y)
+        {
+            float xCord = x * depthWidth;
+            float yCord = y * depthHeight;
+
+            ushort depth = GetDepthPixel((int)xCord, (int)yCord);
+            byte upperByte = (byte)(depth >> 8);
+            byte lowerByte = (byte)(depth & 0xFF);
+
+            return (upperByte, lowerByte);
+        }
+
         public UInt16 GetDepthPixel(int x, int y)
         {
-            return GetDepthPixel(y * depthWidth + x);
+            int count = 3;
+            float val = 0;
+            int samples = 0;
+
+            for(int i = -count; i <= count; i++)
+            {
+                for (int j = -count; j <= count; j++)
+                {
+                    int yCord = y + i;
+                    int xCord = x + j;
+
+                    if (yCord >= 0 && yCord < depthHeight && xCord >= 0 && xCord < depthWidth)
+                    {
+                        int depth = GetDepthPixel(yCord * depthWidth + xCord);
+                        if(depth != 0)
+                        {
+                            val += depth;
+                            samples++;
+                        }
+                    }
+                }
+            }
+
+            if(samples == 0)
+            {
+                return 0;
+            }
+
+            return (UInt16)(val / samples);
+
+            //return GetDepthPixel(y * depthWidth + x);
         }
 
         public UInt16 GetDepthPixel(int index)
@@ -292,7 +409,7 @@ namespace tutorial
             }
             else
             {
-                return ushort.MaxValue;
+                return 0;
             }
         }
     }

@@ -28,13 +28,14 @@ namespace tutorial.GPU
         public float reciprocalWidth { get; set; }
 
         public bool isBGR { get; set; }
-
+        public float depthCutOff { get; set; }
 
         public Camera(Camera camera, Vec3 movement, Vec3 turn)
         {
             this.width = camera.width;
             this.height = camera.height;
             this.isBGR = camera.isBGR;
+            this.depthCutOff = camera.depthCutOff;
 
             this.noHitColor = camera.noHitColor;
 
@@ -70,6 +71,7 @@ namespace tutorial.GPU
             this.height = camera.height;
             this.noHitColor = camera.noHitColor;
             this.isBGR = camera.isBGR;
+            this.depthCutOff = camera.depthCutOff;
 
             this.verticalFov = vfov;
 
@@ -91,6 +93,7 @@ namespace tutorial.GPU
             this.height = new SpecializedValue<int>(height);
             this.noHitColor = camera.noHitColor;
             this.isBGR = camera.isBGR;
+            this.depthCutOff = camera.depthCutOff;
 
             this.verticalFov = camera.verticalFov;
 
@@ -112,6 +115,7 @@ namespace tutorial.GPU
             this.height = new SpecializedValue<int>(height);
             this.noHitColor = noHitColor;
             this.isBGR = isBGR;
+            this.depthCutOff = 1;
 
             this.verticalFov = verticalFov;
             this.origin = origin;

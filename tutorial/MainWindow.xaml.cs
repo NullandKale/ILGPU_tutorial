@@ -33,7 +33,8 @@ namespace tutorial
         public Accelerator device;
 
         public Action<Index2D, Camera, dPixelBuffer2D<byte>, dVoxelShortBuffer> generateFrameKernel;
-        public Action<Index2D, FrameBuffer, dVoxelShortBuffer> fillVoxelsKernel;
+        public Action<Index2D, Camera, FrameBuffer, dVoxelShortBuffer> fillVoxelsKernel;
+        public Action<Index2D, dVoxelShortBuffer> clearVoxelsKernel;
         public Action<Index2D, Camera, bool, dPixelBuffer2D<byte>, FrameBuffer> generateTestKernel;
 
         public Camera camera;
@@ -47,7 +48,7 @@ namespace tutorial
 
         public Thread renderThread;
 
-        public int renderState = 1;
+        public int renderState = 2;
 
         public int ScreenWidth;
         public int ScreenHeight;
@@ -55,7 +56,7 @@ namespace tutorial
         public MainWindow()
         {
             InitializeComponent();
-            InitGPU(true);
+            InitGPU(false);
         }
 
         private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -106,7 +107,14 @@ namespace tutorial
             }
 
             frameBuffer = new PixelBuffer2D<byte>(device!, height, width);
-            camera = new Camera(new Vec3(0, 0, voxelBuffer.GetDVoxelBuffer().aabb.max.z * 5), new Vec3(0, 0, voxelBuffer.GetDVoxelBuffer().aabb.max.z), new Vec3(0, -1, 0), width, height, 110f, new Vec3(0, 0, 0));
+
+            Vec3 origin = new Vec3(0, 0, voxelBuffer.GetDVoxelBuffer().aabb.max.z * 3);
+            Vec3 lookAt = new Vec3(0, 0, voxelBuffer.GetDVoxelBuffer().aabb.max.z);
+
+            //Vec3 origin = new Vec3(voxelBuffer.GetDVoxelBuffer().aabb.min.x * 3, 0, 0);
+            //Vec3 lookAt = new Vec3(voxelBuffer.GetDVoxelBuffer().aabb.min.x, 0, 0);
+
+            camera = new Camera(origin, lookAt, new Vec3(0, -1, 0), width, height, 110f, new Vec3(0, 0, 0));
 
             Application.Current?.Dispatcher.Invoke(() =>
             {
@@ -125,34 +133,59 @@ namespace tutorial
 
             voxelBuffer = new VoxelShortBuffer(device, kinect.Width, kinect.Height, 256, new Vec3(1, 1, 1));
 
-            fillVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index2D, FrameBuffer, dVoxelShortBuffer>(FillVoxelBuffer);
+            fillVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, FrameBuffer, dVoxelShortBuffer>(FillVoxelBuffer);
+            clearVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index2D, dVoxelShortBuffer>(ClearVoxelBuffer);
             generateFrameKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, dPixelBuffer2D<byte>, dVoxelShortBuffer> (GenerateFrame);
             generateTestKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, bool, dPixelBuffer2D<byte>, FrameBuffer> (GenerateTestFrame);
 
         }
 
-        private static void FillVoxelBuffer(Index2D pixel, FrameBuffer frameBuffer, dVoxelShortBuffer voxels)
+        private static void ClearVoxelBuffer(Index2D pixel, dVoxelShortBuffer voxels)
+        {
+            for(int z = 0; z < voxels.length; z++)
+            {
+                voxels.writeFrameBuffer(pixel.X, pixel.Y, z, (0, 0, 0));
+            }
+        }
+
+        private static void FillVoxelBuffer(Index2D pixel, Camera camera, FrameBuffer frameBuffer, dVoxelShortBuffer voxels)
         {
             float x = ((float)pixel.X / (float)frameBuffer.depthWidth);
             float y = ((float)pixel.Y / (float)frameBuffer.depthHeight);
 
-            float depthData = frameBuffer.GetDepthPixel(x,y);
+            float depth = frameBuffer.GetDepthPixel(x,y);
+
+            bool flipDepth = true;
+
+            if (depth < 0)
+            {
+                return;
+            }
+
+            if (depth > camera.depthCutOff)
+            {
+                return;
+            }
+
+            if (flipDepth)
+            {
+                depth = 1.0f - depth;
+            }
+
             (byte r, byte g, byte b, byte a) colorData = frameBuffer.GetColorPixel(x,y);
 
             //colorData.r = (byte)(depthData * 255);
             //colorData.g = (byte)(depthData * 255);
             //colorData.b = (byte)(depthData * 255);
 
-            int extraThickness = 255;
-            int z = (int)(depthData * voxels.length);
-            int endX = XMath.Max(z - extraThickness, 0);
+            float extraThickness = 255;
+            float z = depth * voxels.length;
+
+            float endX = XMath.Max(z - extraThickness, 0);
 
             for (; z >= endX; z--)
             {
-                if(z < 256 || z >= 0)
-                {
-                    voxels.writeFrameBuffer(x, y, z, colorData);
-                }
+                voxels.writeFrameBuffer(x, y, z / voxels.length, colorData);
             }
         }
 
@@ -165,31 +198,28 @@ namespace tutorial
                 float x = ((float)pixel.X / (float)frameBuffer.depthWidth);
                 float y = ((float)pixel.Y / (float)frameBuffer.depthHeight);
 
-                //int x = pixel.X;
-                //int y = pixel.Y;
-
                 float depth = frameBuffer.GetDepthPixel(x, y);
 
-                //color.r = (byte)(depth / ushort.MaxValue * 255.0);
-                //color.g = (byte)(depth / ushort.MaxValue * 255.0);
-                //color.b = (byte)(depth / ushort.MaxValue * 255.0);
+                bool flipDepth = true;
+
+                if (depth < 0)
+                {
+                    depth = flipDepth ? 1 : 0;
+                }
+
+                if(depth > camera.depthCutOff)
+                {
+                    depth = flipDepth ? 1 : 0;
+                }
+
+                if (flipDepth)
+                {
+                    depth = 1.0f - depth;
+                }
 
                 color.r = (byte)(depth * 255.0);
                 color.g = (byte)(depth * 255.0);
                 color.b = (byte)(depth * 255.0);
-
-                //if (depth > 0)
-                //{
-                //    color.r = 255;
-                //    color.g = 255;
-                //    color.b = 255;
-                //}
-                //else
-                //{
-                //    color.r = 255;
-                //    color.g = 0;
-                //    color.b = 255;
-                //}
             }
             else
             {
@@ -267,7 +297,7 @@ namespace tutorial
 
             if (e.Key == Key.Space)
             {
-                //TakeScreenshot();
+                TakeScreenshot();
             }
 
             if (e.Key == Key.D1)
@@ -297,6 +327,18 @@ namespace tutorial
                 }
             }
 
+            if(e.Key == Key.T)
+            {
+                camera.depthCutOff -= 0.1f;
+                camera.depthCutOff = MathF.Max(camera.depthCutOff, 0);
+            }
+
+            if(e.Key == Key.Y)
+            {
+                camera.depthCutOff += 0.1f;
+                camera.depthCutOff = MathF.Min(camera.depthCutOff, 1);
+            }
+
             if (e.Key == Key.Up)
             {
                 camera = new Camera(camera, camera.verticalFov + 5);
@@ -323,9 +365,15 @@ namespace tutorial
         {
             pause = true;
             camera.isBGR = true;
-            for (int i = 0; i < 75; i++)
+
+            float movement = 25;
+            int totalFrames = 75;
+
+            camera = new Camera(camera, new Vec3(movement * totalFrames / 2f, 0, 0), new Vec3());
+
+            for (int i = 0; i < totalFrames; i++)
             {
-                camera = new Camera(camera, new Vec3(-25, 0, 0), new Vec3());
+                camera = new Camera(camera, new Vec3(-movement, 0, 0), new Vec3());
 
                 generateFrameKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, frameBuffer.GetDPixelBuffer(), voxelBuffer.GetDVoxelBuffer());
                 device.Synchronize();
@@ -364,8 +412,6 @@ namespace tutorial
                 {
                     Timer.Start();
 
-                    kinect.TryCaptureFromCamera();
-
                     switch (renderState)
                     {
                         case 0:
@@ -375,7 +421,8 @@ namespace tutorial
                             generateTestKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, true, frameBuffer.GetDPixelBuffer(), kinect.GetCurrentFrame());
                             break;
                         case 2:
-                            fillVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), kinect.GetCurrentFrame(), voxelBuffer.GetDVoxelBuffer());
+                            clearVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), voxelBuffer.GetDVoxelBuffer());
+                            fillVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), camera, kinect.GetCurrentFrame(), voxelBuffer.GetDVoxelBuffer());
                             generateFrameKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, frameBuffer.GetDPixelBuffer(), voxelBuffer.GetDVoxelBuffer());
                             break;
                     }
