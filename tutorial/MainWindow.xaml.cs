@@ -36,6 +36,7 @@ namespace tutorial
         public Action<Index2D, Camera, FrameBuffer, dVoxelShortBuffer> fillVoxelsKernel;
         public Action<Index2D, dVoxelShortBuffer> clearVoxelsKernel;
         public Action<Index2D, Camera, bool, dPixelBuffer2D<byte>, FrameBuffer> generateTestKernel;
+        public Action<Index2D, FrameBuffer, SpecializedValue<int>, SpecializedValue<int>> filterDepthMapKernel;
 
         public Camera camera;
         public VoxelShortBuffer voxelBuffer;
@@ -45,6 +46,8 @@ namespace tutorial
         public volatile bool shuttingDown = false;
         public volatile bool run = true;
         public volatile bool pause = false;
+
+        public bool doFilter = true;
 
         public Thread renderThread;
 
@@ -119,7 +122,7 @@ namespace tutorial
             Application.Current?.Dispatcher.Invoke(() =>
             {
                 frame.UpdateResolution(width, height);
-                frame.update(ref frameBuffer.GetRawFrameData());
+                frame.update(device, frameBuffer);
             });
 
             Start();
@@ -129,7 +132,7 @@ namespace tutorial
         {
             context = Context.Create(builder => builder.Cuda().CPU().EnableAlgorithms().Optimize(OptimizationLevel.O2));
             device = context.GetPreferredDevice(forceCPU).CreateAccelerator(context);
-            kinect = new Kinect(device);
+            kinect = new Kinect(device, optimizeForFace: true);
 
             voxelBuffer = new VoxelShortBuffer(device, kinect.Width, kinect.Height, 256, new Vec3(1, 1, 1));
 
@@ -137,6 +140,7 @@ namespace tutorial
             clearVoxelsKernel = device.LoadAutoGroupedStreamKernel<Index2D, dVoxelShortBuffer>(ClearVoxelBuffer);
             generateFrameKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, dPixelBuffer2D<byte>, dVoxelShortBuffer> (GenerateFrame);
             generateTestKernel = device.LoadAutoGroupedStreamKernel<Index2D, Camera, bool, dPixelBuffer2D<byte>, FrameBuffer> (GenerateTestFrame);
+            filterDepthMapKernel = device.LoadAutoGroupedStreamKernel<Index2D, FrameBuffer, SpecializedValue<int>, SpecializedValue<int>>(FilterDepthMap);
 
         }
 
@@ -144,41 +148,36 @@ namespace tutorial
         {
             for(int z = 0; z < voxels.length; z++)
             {
-                voxels.writeFrameBuffer(pixel.X, pixel.Y, z, (0, 0, 0));
+                voxels.writeFrameBuffer(pixel.X, pixel.Y, z, default);
+            }
+        }
+
+        private static void FilterDepthMap(Index2D pixel, FrameBuffer frameBuffer, SpecializedValue<int> filterDistance, SpecializedValue<int> passes)
+        {
+            for(int i = 0; i < passes; i++)
+            {
+                ushort filteredDepth = frameBuffer.FilterDepthPixel(pixel.X, pixel.Y, filterDistance, filterDistance, 2);
+                frameBuffer.SetDepthPixel(pixel.X, pixel.Y, filteredDepth);
             }
         }
 
         private static void FillVoxelBuffer(Index2D pixel, Camera camera, FrameBuffer frameBuffer, dVoxelShortBuffer voxels)
         {
-            float x = ((float)pixel.X / (float)frameBuffer.depthWidth);
-            float y = ((float)pixel.Y / (float)frameBuffer.depthHeight);
+            float x = ((float)pixel.X / (float)frameBuffer.width);
+            float y = ((float)pixel.Y / (float)frameBuffer.height);
 
             float depth = frameBuffer.GetDepthPixel(x,y);
 
-            bool flipDepth = true;
-
-            if (depth < 0)
+            if (depth == 0)
             {
-                return;
+                depth = 1;
             }
 
-            if (depth > camera.depthCutOff)
-            {
-                return;
-            }
-
-            if (flipDepth)
-            {
-                depth = 1.0f - depth;
-            }
-
+            depth = 1.0f - depth;
+            
             (byte r, byte g, byte b, byte a) colorData = frameBuffer.GetColorPixel(x,y);
 
-            //colorData.r = (byte)(depthData * 255);
-            //colorData.g = (byte)(depthData * 255);
-            //colorData.b = (byte)(depthData * 255);
-
-            float extraThickness = 255;
+            float extraThickness = 20;
             float z = depth * voxels.length;
 
             float endX = XMath.Max(z - extraThickness, 0);
@@ -195,21 +194,22 @@ namespace tutorial
 
             if(testDepth)
             {
-                float x = ((float)pixel.X / (float)frameBuffer.depthWidth);
-                float y = ((float)pixel.Y / (float)frameBuffer.depthHeight);
+                float x = ((float)pixel.X / (float)frameBuffer.width);
+                float y = ((float)pixel.Y / (float)frameBuffer.height);
 
                 float depth = frameBuffer.GetDepthPixel(x, y);
 
-                bool flipDepth = true;
+                bool flipDepth = false;
+                bool failed1 = false;
+                bool failed2 = false;
 
                 if (depth < 0)
                 {
-                    depth = flipDepth ? 1 : 0;
+                    //failed1 = true;
                 }
-
-                if(depth > camera.depthCutOff)
+                else if (depth > camera.depthCutOff)
                 {
-                    depth = flipDepth ? 1 : 0;
+                    failed2 = true;
                 }
 
                 if (flipDepth)
@@ -217,14 +217,14 @@ namespace tutorial
                     depth = 1.0f - depth;
                 }
 
-                color.r = (byte)(depth * 255.0);
-                color.g = (byte)(depth * 255.0);
+                color.r = (byte)((failed2 ? 0 : depth) * 255.0);
+                color.g = (byte)((failed1 ? 0 : depth) * 255.0);
                 color.b = (byte)(depth * 255.0);
             }
             else
             {
-                float x = ((float)pixel.X / (float)frameBuffer.colorWidth);
-                float y = ((float)pixel.Y / (float)frameBuffer.colorHeight);
+                float x = ((float)pixel.X / (float)frameBuffer.width);
+                float y = ((float)pixel.Y / (float)frameBuffer.height);
 
                 color = frameBuffer.GetColorPixel(x, y);
             }
@@ -244,17 +244,17 @@ namespace tutorial
         {
             Ray ray = camera.GetRay(pixel.X, pixel.Y);
             ray = new Ray(ray.a, new Vec3(ray.b.x, ray.b.y, ray.b.z));
-            (byte x, byte y, byte z) hit = voxels.hit(ray, 0.001f, float.MaxValue);
+            Voxel hit = voxels.hit(ray, 0.001f, float.MaxValue);
 
-            if (hit.x != 0 && hit.y != 0 && hit.z != 0)
+            if (hit.r != 0 && hit.g != 0 && hit.b != 0)
             {
                 if (camera.isBGR)
                 {
-                    output.writeFrameBuffer(pixel.X, pixel.Y, hit.x, hit.y, hit.z);
+                    output.writeFrameBuffer(pixel.X, pixel.Y, hit.r, hit.g, hit.b);
                 }
                 else
                 {
-                    output.writeFrameBuffer(pixel.X, pixel.Y, hit.z, hit.y, hit.x);
+                    output.writeFrameBuffer(pixel.X, pixel.Y, hit.b, hit.g, hit.r);
                 }
             }
             else
@@ -329,14 +329,17 @@ namespace tutorial
 
             if(e.Key == Key.T)
             {
-                camera.depthCutOff -= 0.1f;
-                camera.depthCutOff = MathF.Max(camera.depthCutOff, 0);
+                kinect.minMax.max = 1000;
             }
 
             if(e.Key == Key.Y)
             {
-                camera.depthCutOff += 0.1f;
-                camera.depthCutOff = MathF.Min(camera.depthCutOff, 1);
+                kinect.minMax.max = (ushort)(ushort.MaxValue / 8.0);
+            }
+
+            if(e.Key == Key.F)
+            {
+                doFilter = !doFilter;
             }
 
             if (e.Key == Key.Up)
@@ -412,17 +415,27 @@ namespace tutorial
                 {
                     Timer.Start();
 
+                    FrameBuffer currentFrame = kinect.GetCurrentFrame();
+                    currentFrame.locked = true;
+
+                    currentFrame.filtered = false;
+                    if(doFilter && !currentFrame.filtered)
+                    {
+                        filterDepthMapKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), currentFrame, new SpecializedValue<int>(2), new SpecializedValue<int>(15));
+                        //currentFrame.filtered = true;
+                    }
+
                     switch (renderState)
                     {
                         case 0:
-                            generateTestKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, false, frameBuffer.GetDPixelBuffer(), kinect.GetCurrentFrame());
+                            generateTestKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, false, frameBuffer.GetDPixelBuffer(), currentFrame);
                             break;
                         case 1:
-                            generateTestKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, true, frameBuffer.GetDPixelBuffer(), kinect.GetCurrentFrame());
+                            generateTestKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, true, frameBuffer.GetDPixelBuffer(), currentFrame);
                             break;
                         case 2:
                             clearVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), voxelBuffer.GetDVoxelBuffer());
-                            fillVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), camera, kinect.GetCurrentFrame(), voxelBuffer.GetDVoxelBuffer());
+                            fillVoxelsKernel(new Index2D(kinect.Width - 1, kinect.Height - 1), camera, currentFrame, voxelBuffer.GetDVoxelBuffer());
                             generateFrameKernel(new Index2D(frameBuffer.width - 1, frameBuffer.height - 1), camera, frameBuffer.GetDPixelBuffer(), voxelBuffer.GetDVoxelBuffer());
                             break;
                     }
@@ -436,13 +449,14 @@ namespace tutorial
                         Trace.WriteLine(e.ToString());
                     }
 
+                    currentFrame.locked = false;
 
                     try
                     {
                         Application.Current?.Dispatcher.Invoke(() =>
                         {
                             frame.frameTime = Timer.Elapsed.Milliseconds;
-                            frame.update(ref frameBuffer.GetRawFrameData());
+                            frame.update(device, frameBuffer);
                         });
                     }
                     catch
@@ -454,9 +468,9 @@ namespace tutorial
 
                 }
 
-                int timeToSleep = (int)(30.0 - Timer.Elapsed.TotalMilliseconds);
+                int timeToSleep = (int)(1000.0 / 60.0 - Timer.Elapsed.TotalMilliseconds);
 
-                if(timeToSleep > 0)
+                if (timeToSleep > 0)
                 {
                     Thread.Sleep(timeToSleep);
                 }

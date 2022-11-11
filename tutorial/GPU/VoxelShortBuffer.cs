@@ -12,6 +12,7 @@ namespace tutorial.GPU
     using System;
     using System.Collections.Generic;
     using System.Linq;
+    using System.Runtime.InteropServices;
     using System.Text;
     using System.Threading.Tasks;
 
@@ -25,7 +26,7 @@ namespace tutorial.GPU
             public int length;
 
             private dVoxelShortBuffer frameBuffer;
-            private MemoryBuffer1D<(byte r, byte g, byte b), Stride1D.Dense> memoryBuffer;
+            private MemoryBuffer1D<Voxel, Stride1D.Dense> memoryBuffer;
 
             public VoxelShortBuffer(Accelerator device, int width, int height, int length, Vec3 scale)
             {
@@ -34,7 +35,7 @@ namespace tutorial.GPU
                 this.height = height;
                 this.length = length;
 
-                memoryBuffer = device.Allocate1D<(byte r, byte g, byte b)> (width * height * length);
+                memoryBuffer = device.Allocate1D<Voxel> (width * height * length);
                 frameBuffer = new dVoxelShortBuffer(width, height, length, scale, memoryBuffer);
             }
 
@@ -64,9 +65,9 @@ namespace tutorial.GPU
             public int width;
             public int height;
             public int length;
-            public ArrayView1D<(byte r, byte g, byte b), Stride1D.Dense> data;
+            public ArrayView1D<Voxel, Stride1D.Dense> data;
 
-            public dVoxelShortBuffer(int _width, int _height, int _length, Vec3 _scale, MemoryBuffer1D<(byte r, byte g, byte b), Stride1D.Dense> _data)
+            public dVoxelShortBuffer(int _width, int _height, int _length, Vec3 _scale, MemoryBuffer1D<Voxel, Stride1D.Dense> _data)
             {
                 scale = _scale;
                 width = _width;
@@ -103,7 +104,7 @@ namespace tutorial.GPU
                 return (x, y, z);
             }
 
-            public (byte r, byte g, byte b) readFrameBuffer(int x, int y, int z)
+            public Voxel readFrameBuffer(int x, int y, int z)
             {
                 int idx = GetIndexFromPos(x, y, z);
                 return data[idx];
@@ -114,18 +115,105 @@ namespace tutorial.GPU
                 int idx = GetIndexFromPos(x, y, z);
                 if(idx >= 0 && idx < data.Length)
                 {
-                    data[idx] = (value.r, value.g, value.b);
+                    data[idx] = new Voxel(value.r, value.g, value.b);
                 }
             }
 
-            public void writeFrameBuffer(int x, int y, int z, (byte r, byte g, byte b) value)
+            public void writeFrameBuffer(int x, int y, int z, Voxel value)
             {
                 int idx = GetIndexFromPos(x, y, z);
                 data[idx] = value;
             }
 
+            public void SetVoxel(Ray ray, float depth, Voxel color, bool isLeft)
+            {
+                if(isLeft)
+                {
+                    color.SetAfterLeftCameraData(true);
+                }
+                else
+                {
+                    color.SetAfterRightCameraData(true);
+                }
 
-            public (byte r, byte g, byte b) hit(Ray ray, float tmin, float tmax)
+                if (aabb.hit(ray, depth, float.MaxValue))
+                {
+                    Vec3 pos = ray.a;
+
+                    Vec3i iPos = new Vec3i(XMath.Floor(pos.x), XMath.Floor(pos.y), XMath.Floor(pos.z));
+
+                    Vec3 step = new Vec3(ray.b.x > 0 ? 1f : -1f, ray.b.y > 0 ? 1f : -1f, ray.b.z > 0 ? 1f : -1f);
+
+                    Vec3 tDelta = new Vec3(
+                        XMath.Abs(1f / ray.b.x),
+                        XMath.Abs(1f / ray.b.y),
+                        XMath.Abs(1f / ray.b.z));
+
+                    Vec3 dist = new Vec3(
+                        step.x > 0 ? (iPos.x + 1 - pos.x) : (pos.x - iPos.x),
+                        step.y > 0 ? (iPos.y + 1 - pos.y) : (pos.y - iPos.y),
+                        step.z > 0 ? (iPos.z + 1 - pos.z) : (pos.z - iPos.z));
+
+                    Vec3 tMax = new Vec3(
+                         float.IsInfinity(tDelta.x) ? float.MaxValue : tDelta.x * dist.x,
+                         float.IsInfinity(tDelta.y) ? float.MaxValue : tDelta.y * dist.y,
+                         float.IsInfinity(tDelta.z) ? float.MaxValue : tDelta.z * dist.z);
+
+                    int i = -1;
+                    int max = XMath.Max(width, height) * 3;
+
+                    while (i < max)
+                    {
+                        Vec3 offsetPos = pos - position;
+                        if ((offsetPos.x >= 0 && offsetPos.x < width) && (offsetPos.y >= 0 && offsetPos.y < height) && (offsetPos.z >= 0 && offsetPos.z < length))
+                        {
+                            Voxel tile = readFrameBuffer((int)offsetPos.x, (int)offsetPos.y, (int)offsetPos.z);
+
+                            writeFrameBuffer((int)offsetPos.x, (int)offsetPos.y, (int)offsetPos.z, tile);
+
+                            if (tile.isClear())
+                            {
+                                return ;
+                            }
+                        }
+                        else
+                        {
+                            return;
+                        }
+
+                        i++;
+
+                        if (tMax.x < tMax.y)
+                        {
+                            if (tMax.x < tMax.z)
+                            {
+                                pos.x += step.x;
+                                tMax.x += tDelta.x;
+                            }
+                            else
+                            {
+                                pos.z += step.z;
+                                tMax.z += tDelta.z;
+                            }
+                        }
+                        else
+                        {
+                            if (tMax.y < tMax.z)
+                            {
+                                pos.y += step.y;
+                                tMax.y += tDelta.y;
+                            }
+                            else
+                            {
+                                pos.z += step.z;
+                                tMax.z += tDelta.z;
+                            }
+                        }
+                    }
+                }
+            }
+
+            public Voxel hit(Ray ray, float tmin, float tmax)
             {
                 if (aabb.hit(ray, tmin, tmax))
                 {
@@ -158,9 +246,9 @@ namespace tutorial.GPU
                         Vec3 offsetPos = pos - position;
                         if ((offsetPos.x >= 0 && offsetPos.x < width) && (offsetPos.y >= 0 && offsetPos.y < height) && (offsetPos.z >= 0 && offsetPos.z < length))
                         {
-                            (byte r, byte g, byte b) tile = readFrameBuffer((int)offsetPos.x, (int)offsetPos.y, (int)offsetPos.z);
+                            Voxel tile = readFrameBuffer((int)offsetPos.x, (int)offsetPos.y, (int)offsetPos.z);
 
-                            if (tile != default)
+                            if (!tile.isClear())
                             {
                                 return tile;
                             }
@@ -201,6 +289,83 @@ namespace tutorial.GPU
                 else
                 {
                     return default;
+                }
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential, Size = 4)]
+        public struct Voxel
+        {
+            public byte r;
+            public byte g;
+            public byte b;
+            public byte state;
+
+            public Voxel()
+            {
+                r = 0;
+                g = 0;
+                b = 0;
+                state = 0;
+            }
+
+            public Voxel(byte r, byte g, byte b)
+            {
+                this.r = r;
+                this.g = g;
+                this.b = b;
+                state = 0;
+                SetClear(false);
+            }
+
+            public bool isClear()
+            {
+                return !((state & 0b1000_0000) > 0);
+            }
+
+            public void SetClear(bool val)
+            {
+                if(!val)
+                {
+                    state |= 0b1000_0000;
+                }
+                else
+                {
+                    state &= 0b0111_1111;
+                }
+            }
+
+            public bool isAfterLeftCameraData()
+            {
+                return (state & 0b0100_0000) > 0;
+            }
+
+            public void SetAfterLeftCameraData(bool val)
+            {
+                if (!val)
+                {
+                    state |= 0b0100_0000;
+                }
+                else
+                {
+                    state &= 0b1011_1111;
+                }
+            }
+
+            public bool isAfterRightCameraData()
+            {
+                return (state & 0b0010_0000) > 0;
+            }
+
+            public void SetAfterRightCameraData(bool val)
+            {
+                if (!val)
+                {
+                    state |= 0b0010_0000;
+                }
+                else
+                {
+                    state &= 0b1101_1111;
                 }
             }
         }

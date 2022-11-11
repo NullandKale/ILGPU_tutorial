@@ -26,12 +26,17 @@ namespace tutorial.GPU
 
         private T[] data;
         private dPixelBuffer2D<T> frameBuffer;
-        private MemoryBuffer1D<T, Stride1D.Dense> memoryBuffer;
+        public MemoryBuffer1D<T, Stride1D.Dense> memoryBuffer;
 
         public PixelBuffer2D(Accelerator device, int height, int width)
         {
             this.width = width;
             this.height = height;
+
+            unsafe
+            {
+                byteLength = width * height * 3 * sizeof(T);
+            }
 
             data = new T[width * height * 3];
             memoryBuffer = device.Allocate1D<T>(width * height * 3);

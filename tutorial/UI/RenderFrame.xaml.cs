@@ -1,4 +1,5 @@
-﻿using System;
+﻿using ILGPU.Runtime;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -13,6 +14,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Navigation;
 using System.Windows.Shapes;
+using tutorial.GPU;
 
 namespace tutorial.UI
 {
@@ -21,6 +23,8 @@ namespace tutorial.UI
     /// </summary>
     public partial class RenderFrame : UserControl
     {
+        private static RenderFrame instance;
+
         public double scale = 1;
 
         public int width;
@@ -30,12 +34,23 @@ namespace tutorial.UI
         public Int32Rect rect;
 
         public double frameTime;
+        public double captureTime;
 
         public RenderFrame()
         {
             InitializeComponent();
 
+            instance = this;
+
             SizeChanged += RenderFrame_SizeChanged;
+        }
+
+        public static void SetCaptureTime(double captureTime)
+        {
+            if(instance != null)
+            {
+                instance.captureTime = captureTime;
+            }
         }
 
         private void RenderFrame_SizeChanged(object sender, SizeChangedEventArgs e)
@@ -69,6 +84,30 @@ namespace tutorial.UI
             }
         }
 
+        public void update(Accelerator device, PixelBuffer2D<byte> data)
+        {
+            lock(this)
+            {
+                if(wBitmap != null)
+                {
+                    if(data.byteLength == wBitmap.PixelWidth * wBitmap.PixelHeight * 3)
+                    {
+                        unsafe
+                        {
+                            wBitmap.Lock();
+                            Span<byte> target = new Span<byte>(wBitmap.BackBuffer.ToPointer(), (int)data.byteLength);
+                            data.memoryBuffer.View.CopyToCPU(device.DefaultStream, target);
+                            device.Synchronize();
+                            wBitmap.AddDirtyRect(rect);
+                            wBitmap.Unlock();
+                        }
+
+                        Info.Content = "F: " + (int)frameTime + " MS\n" + "C: " + (int)captureTime + " MS";
+                    }
+                }
+            }
+        }
+
         public void update(ref byte[] data)
         {
             lock(this)
@@ -83,7 +122,7 @@ namespace tutorial.UI
                         wBitmap.AddDirtyRect(rect);
                         wBitmap.Unlock();
 
-                        Info.Content = (int)frameTime + " MS";
+                        Info.Content = "F: " + (int)frameTime + " MS\n" + "C: " + (int)captureTime + " MS";
                     }
                 }
             }
