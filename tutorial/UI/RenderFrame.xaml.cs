@@ -23,9 +23,7 @@ namespace tutorial.UI
     /// </summary>
     public partial class RenderFrame : UserControl
     {
-        private static RenderFrame instance;
-
-        public double scale = 1;
+        private static RenderFrame? instance;
 
         public int width;
         public int height;
@@ -64,17 +62,6 @@ namespace tutorial.UI
             {
                 this.width = width;
                 this.height = height;
-
-                if (scale > 0)
-                {
-                    height = (int)(height * scale);
-                    width = (int)(width * scale);
-                }
-                else
-                {
-                    height = (int)(height / -scale);
-                    width = (int)(width / -scale);
-                }
 
                 width += ((width * 3) % 4);
 

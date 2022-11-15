@@ -47,7 +47,6 @@ namespace tutorial.GPU
             return "{" + string.Format("{0:0.00}", x) + ", " + string.Format("{0:0.00}", y) + ", " + string.Format("{0:0.00}", z) + "}";
         }
 
-
         public static Vec3 operator -(Vec3 vec)
         {
             return new Vec3(-vec.x, -vec.y, -vec.z);
@@ -78,6 +77,16 @@ namespace tutorial.GPU
                 default:
                     return 0;
             }
+        }
+
+        public bool isCloseToZero(float range)
+        {
+            return x > -range && y > -range && z > -range && x < range && y < range && z < range;
+        }
+
+        public bool isWithin(Vec3 upperBound)
+        {
+            return x > float.Epsilon && y > float.Epsilon && z > float.Epsilon && x < upperBound.x && y < upperBound.y && z < upperBound.z;
         }
 
         public static Vec3 setX(Vec3 v, float x)

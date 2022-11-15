@@ -7,11 +7,11 @@ namespace tutorial.GPU
     public struct FrameBuffer
     {
         public bool locked;
-        public bool filtered;
         public ushort minDepth;
         public ushort maxDepth;
         public int width;
         public int height;
+        public bool filtered;
 
         public ArrayView1D<byte, Stride1D.Dense> color;
         public ArrayView1D<ushort, Stride1D.Dense> depth;
@@ -20,7 +20,7 @@ namespace tutorial.GPU
                            ushort minDepth, ushort maxDepth,
                            ArrayView1D<byte, Stride1D.Dense> color, ArrayView1D<ushort, Stride1D.Dense> depth)
         {
-            locked = true;
+            locked = false;
             filtered = false;
             this.minDepth = minDepth;
             this.maxDepth = maxDepth;
@@ -28,6 +28,13 @@ namespace tutorial.GPU
             this.height = height;
             this.color = color;
             this.depth = depth;
+        }
+
+        public Vec3 GetColor(float x, float y)
+        {
+            var c = GetColorPixel((int)(x * width), (int)(y * height));
+
+            return new Vec3(c.r / 255.0f, c.g / 255.0f, c.b / 255.0f);
         }
 
         public (byte r, byte g, byte b, byte a) GetColorPixel(float x, float y)
@@ -57,9 +64,9 @@ namespace tutorial.GPU
             }
         }
 
-        public static float Remap(float value, float currentMin, float currentMax, float newMin, float newMax)
+        public static float Remap(float source, float sourceFrom, float sourceTo, float targetFrom, float targetTo)
         {
-            return (value - currentMin) / (currentMax - currentMin) * (newMax - newMin) + newMin;
+            return targetFrom + (source - sourceFrom) * (targetTo - targetFrom) / (sourceTo - sourceFrom);
         }
 
         public ushort FilterDepthPixel(int x, int y, int filterWidth, int filterHeight, int fuzz)
